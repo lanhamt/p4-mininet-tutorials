@@ -70,8 +70,24 @@ parser MyParser(packet_in packet,
         packet.extract(hdr.ethernet);
         transition select(hdr.ethernet.etherType) {
             TYPE_IPV4 : parse_ipv4;
+            TYPE_MYTUNNEL: parse_tunnel;
             default : accept;
         }
+    }
+   
+    state parse_tunnel {
+        packet.extract(hdr.myTunnel);
+        
+        transition select(hdr.myTunnel.proto_id) {
+            TYPE_IPV4: parse_ipv4;
+            default: accept;
+        }
+        
+        /* if (hdr.myTunnel.proto_id == TYPE_IPV4) {
+            transition parse_ipv4;
+        } else {        
+            transition accept;
+        } */
     }
 
     state parse_ipv4 {
@@ -108,6 +124,24 @@ control MyIngress(inout headers hdr,
         hdr.ethernet.dstAddr = dstAddr;
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
     }
+
+    // tunnel forward action
+    action myTunnel_forward(egressSpec_t port) {
+        standard_metadata.egress_spec = port;
+    }
+
+    // exact match table for tunnel
+    table myTunnel_exact {
+        key = {
+            hdr.myTunnel.dst_id: exact;
+        }
+        actions = {
+            myTunnel_forward;
+            drop;
+        }
+        size = 1024;
+        default_action = drop();
+    }
     
     table ipv4_lpm {
         key = {
@@ -122,16 +156,14 @@ control MyIngress(inout headers hdr,
         default_action = NoAction();
     }
 
-    // TODO: declare a new action: myTunnel_forward(egressSpec_t port)
-
-
-    // TODO: declare a new table: myTunnel_exact
-    // TODO: also remember to add table entries!
-
-
     apply {
-        // TODO: Update control flow
-        if (hdr.ipv4.isValid()) {
+        // if tunneled then apply tunnel table
+        if (hdr.myTunnel.isValid()) {
+            myTunnel_exact.apply();
+        }
+
+        // else if ipv4 then just do that
+        if (!hdr.myTunnel.isValid() && hdr.ipv4.isValid()) {
             ipv4_lpm.apply();
         }
     }
@@ -178,7 +210,7 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
-        // TODO: emit myTunnel header as well
+        packet.emit(hdr.myTunnel);
         packet.emit(hdr.ipv4);
     }
 }

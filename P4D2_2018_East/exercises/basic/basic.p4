@@ -51,8 +51,23 @@ parser MyParser(packet_in packet,
                 inout metadata meta,
                 inout standard_metadata_t standard_metadata) {
 
+    // extract the ethernet and ipv4 headers, then move on to ethernet parser
     state start {
-        /* TODO: add parser logic */
+        transition parse_ether;
+    }
+
+    // parse ethernet, if ipv4 go to that parser, else accept out
+    state parse_ether {
+        packet.extract(hdr.ethernet);
+        transition select(hdr.ethernet.etherType) {
+            TYPE_IPV4: parse_ipv4;
+            default: accept;
+        }
+    }
+
+    // extract ipv4 header
+    state parse_ipv4 {
+        packet.extract(hdr.ipv4);
         transition accept;
     }
 }
@@ -77,9 +92,14 @@ control MyIngress(inout headers hdr,
     action drop() {
         mark_to_drop();
     }
-    
+ 
     action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
-        /* TODO: fill out code in action body */
+        standard_metadata.egress_spec = port;
+
+	hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+
+        hdr.ethernet.srcAddr = hdr.ethernet.dstAddr; 
+        hdr.ethernet.dstAddr = dstAddr;
     }
     
     table ipv4_lpm {
@@ -96,10 +116,12 @@ control MyIngress(inout headers hdr,
     }
     
     apply {
-        /* TODO: fix ingress control logic
+        /*
          *  - ipv4_lpm should be applied only when IPv4 header is valid
          */
-        ipv4_lpm.apply();
+        if (hdr.ipv4.isValid()) {
+            ipv4_lpm.apply();
+        }
     }
 }
 
@@ -144,7 +166,9 @@ control MyComputeChecksum(inout headers hdr, inout metadata meta) {
 
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
-        /* TODO: add deparser logic */
+        /* deparser logic */
+        packet.emit(hdr.ethernet);
+        packet.emit(hdr.ipv4);
     }
 }
 
